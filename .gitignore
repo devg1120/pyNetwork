@@ -1,0 +1,7 @@
+*.swp
+/gen_csv/month_data_build/test/
+/gen_csv/month_data_build/test2/
+/gen_csv/month_data_build/test3/
+/test_data/test*
+__pycache__
+

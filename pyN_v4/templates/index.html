@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>FastAPI + NetworkX + Vis.js (ドラッグ位置修正版)</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet">
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+
+    <style type="text/css">
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #status { font-weight: bold; color: green; }
+        #mynetwork {
+            width: 100%;
+            height: 500px;
+            border: 1px solid lightgray;
+            background-color: #fcfcfc;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>リアルタイム・ネットワークグラフ配信（ドラッグ位置完全修正版）</h2>
+    <p>ステータス: <span id="status">接続中...</span></p>
+    <p>💡 <b>背景ドラッグ</b>で視点移動、<b>ホイール</b>でズームが可能です。ズームした状態でノードを動かしても、位置が巻き戻らず全員に同期します。</p>
+    
+    <div id="mynetwork"></div>
+
+    <script type="text/javascript">
+        const container = document.getElementById('mynetwork');
+        const statusEl = document.getElementById('status');
+        
+        const nodes = new vis.DataSet([]);
+        const edges = new vis.DataSet([]);
+        const data = { nodes: nodes, edges: edges };
+        
+        // 現在ドラッグ中のノードID
+        let draggingNodeId = null;
+
+        const options = {
+            physics: {
+                enabled: false // 物理演算オフ
+            },
+            interaction: {
+                dragView: true,  // 背景ドラッグ移動を許可
+                zoomView: true   // マウスホイールズームを許可
+            },
+            nodes: {
+                shape: 'dot',
+                size: 20
+            },
+            edges: {
+                width: 3
+            }
+        };
+
+        const network = new vis.Network(container, data, options);
+
+        // WebSocketの接続設定
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const socket = new WebSocket(wsUrl);
+
+        // メッセージ受信
+        socket.onmessage = function(event) {
+            const graphData = JSON.parse(event.data);
+            
+            // ユーザーがドラッグ操作中の場合は、そのノードの位置を最新のキャンバス位置で保護する
+            if (draggingNodeId !== null) {
+                graphData.nodes = graphData.nodes.map(node => {
+                    if (node.id === draggingNodeId) {
+                        const currentPos = network.getPositions([draggingNodeId])[draggingNodeId];
+                        return {
+                            ...node,
+                            x: Math.round(currentPos.x),
+                            y: Math.round(currentPos.y)
+                        };
+                    }
+                    return node;
+                });
+            }
+            
+            nodes.update(graphData.nodes);
+            edges.update(graphData.edges);
+        };
+
+        // ドラッグ開始
+        network.on("dragStart", function(params) {
+            if (params.nodes.length > 0) {
+                // 配列の先頭からドラッグ対象のノードIDを取得
+                draggingNodeId = params.nodes[0];
+            }
+        });
+
+        // ドラッグ終了（ユーザーが手を離した瞬間）
+        network.on("dragEnd", function(params) {
+            if (draggingNodeId !== null) {
+                const targetId = draggingNodeId;
+                
+                // 【重要】ズームやカメラ移動に影響されない、ネットワーク空間上の正確な絶対座標を取得
+                const position = network.getPositions([targetId])[targetId];
+                
+                const moveMessage = {
+                    type: "node_dragged",
+                    id: targetId,
+                    x: Math.round(position.x),
+                    y: Math.round(position.y)
+                };
+                
+                // 1. 先にローカルの DataSet を手動で即座に書き換え、更新タイマーとの衝突を防ぐ
+                nodes.update({
+                    id: targetId,
+                    x: Math.round(position.x),
+                    y: Math.round(position.y)
+                });
+
+                // 2. ドラッグ管理状態を先に解除
+                draggingNodeId = null;
+
+                // 3. サーバーへ正確な絶対座標を送信
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify(moveMessage));
+                }
+            }
+        });
+
+        socket.onclose = function() {
+            statusEl.textContent = "切断されました";
+            statusEl.style.color = "red";
+        };
+
+        socket.onerror = function(error) {
+            console.error("WebSocket Error: ", error);
+        };
+    </script>
+</body>
+</html>

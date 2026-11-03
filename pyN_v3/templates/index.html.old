@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>FastAPI + NetworkX + Vis.js (位置固定・バグ修正版)</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet">
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+    <style type="text/css">
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #mynetwork { width: 100%; height: 500px; border: 1px solid lightgray; background-color: #fcfcfc; }
+        #status { font-weight: bold; color: green; }
+    </style>
+</head>
+<body>
+
+    <h2>リアルタイム・ネットワークグラフ配信（位置変更修正版）</h2>
+    <p>ステータス: <span id="status">接続中...</span> (3秒ごとにカラー変更。ノードのドラッグ位置が正確に同期されます)</p>
+    
+    <div id="mynetwork"></div>
+
+    <script type="text/javascript">
+        const container = document.getElementById('mynetwork');
+        const statusEl = document.getElementById('status');
+        
+        // DataSetの初期化
+        const nodes = new vis.DataSet([]);
+        const edges = new vis.DataSet([]);
+        const data = { nodes: nodes, edges: edges };
+        
+        // 現在ユーザーがドラッグ操作中のノードIDを記録する変数
+        let draggingNodeId = null;
+
+        // Vis.jsのオプション設定
+        const options = {
+            physics: {
+                enabled: false // 物理演算をオフにしてノードの位置を完全固定
+            },
+            interaction: {
+                dragView: false // グラフ全体のドラッグ移動を廃止
+            },
+            nodes: {
+                shape: 'dot',
+                size: 20
+            },
+            edges: {
+                width: 3
+            }
+        };
+
+        // ネットワークの生成
+        const network = new vis.Network(container, data, options);
+
+        // WebSocketの接続設定
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const socket = new WebSocket(wsUrl);
+
+        // メッセージ受信（サーバーから定期配信されるカラーや位置を反映）
+        socket.onmessage = function(event) {
+            const graphData = JSON.parse(event.data);
+            
+            // ドラッグ中のノードがある場合、サーバーからの古い座標情報で上書きされるのを防ぐ
+            if (draggingNodeId !== null) {
+                graphData.nodes = graphData.nodes.map(node => {
+                    if (node.id === draggingNodeId) {
+                        // ドラッグ中のノードは、現在のキャンバス上の位置を維持し、カラーだけを取り入れる
+                        const currentPos = network.getPositions([draggingNodeId])[draggingNodeId];
+                        return {
+                            ...node,
+                            x: Math.round(currentPos.x),
+                            y: Math.round(currentPos.y)
+                        };
+                    }
+                    return node;
+                });
+            }
+            
+            nodes.update(graphData.nodes);
+            edges.update(graphData.edges);
+        };
+
+        // ドラッグを開始したとき（どのノードを動かしているか記録）
+        network.on("dragStart", function(params) {
+            if (params.nodes.length > 0) {
+                draggingNodeId = params.nodes[0];
+            }
+        });
+
+        // ドラッグが終了したとき（dragEnd）のイベント
+        network.on("dragEnd", function(params) {
+            if (draggingNodeId !== null) {
+                // ドラッグ終了後のキャンバス上の最新座標を取得
+                const position = network.getPositions([draggingNodeId])[draggingNodeId];
+                
+                // サーバー側に新しい位置情報を送信
+                const moveMessage = {
+                    type: "node_dragged",
+                    id: draggingNodeId,
+                    x: Math.round(position.x),
+                    y: Math.round(position.y)
+                };
+                
+                if (socket.readyState === WebSocket.OPEN) {
+                    // 【修正】JavaScriptのシリアライズ用に JSON.stringify を使用
+                    socket.send(JSON.stringify(moveMessage));
+                }
+                
+                // ドラッグ状態を解除
+                draggingNodeId = null;
+            }
+        });
+
+        socket.onclose = function() {
+            statusEl.textContent = "切断されました";
+            statusEl.style.color = "red";
+        };
+
+        socket.onerror = function(error) {
+            console.error("WebSocket Error: ", error);
+        };
+    </script>
+</body>
+</html>
+

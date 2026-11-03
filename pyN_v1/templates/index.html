@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>FastAPI + NetworkX + Vis.js</title>
+    <!-- Vis.js Network のCDNを読み込み -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet">
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+
+    <style type="text/css">
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #mynetwork {
+            width: 100%;
+            height: 500px;
+            border: 1px solid lightgray;
+            background-color: #fcfcfc;
+        }
+        #status {
+            font-weight: bold;
+            color: green;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>リアルタイム・ネットワークグラフ配信</h2>
+    <p>ステータス: <span id="status">接続中...</span> (3秒ごとにNetworkXのグラフが更新されます)</p>
+    
+    <!-- グラフを描画するコンテナ -->
+    <div id="mynetwork"></div>
+
+    <script type="text/javascript">
+        // 描画先の要素を取得
+        const container = document.getElementById('mynetwork');
+        const statusEl = document.getElementById('status');
+        
+        // Vis.jsのデータセット初期化
+        const nodes = new vis.DataSet([]);
+        const edges = new vis.DataSet([]);
+        const data = { nodes: nodes, edges: edges };
+        
+        // Vis.jsのオプション設定
+        const options = {
+            physics: {
+                stabilization: false // リアルタイム更新のために最適化
+            },
+            nodes: {
+                shape: 'dot',
+                size: 16,
+                color: '#57a3f3'
+            },
+            edges: {
+                color: '#848484',
+                width: 2
+            }
+        };
+
+        // ネットワークオブジェクトの作成
+        const network = new vis.Network(container, data, options);
+
+        // WebSocketの接続（現在のホスト情報から自動生成）
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const socket = new WebSocket(wsUrl);
+
+        // メッセージ受信時の処理
+        socket.onmessage = function(event) {
+            const graphData = JSON.parse(event.data);
+            
+            // 既存のデータをクリアして新しいデータをセット
+            nodes.clear();
+            edges.clear();
+            
+            nodes.add(graphData.nodes);
+            edges.add(graphData.edges);
+        };
+
+        socket.onclose = function() {
+            statusEl.textContent = "切断されました";
+            statusEl.style.color = "red";
+        };
+
+        socket.onerror = function(error) {
+            console.error("WebSocket Error: ", error);
+        };
+    </script>
+</body>
+</html>
